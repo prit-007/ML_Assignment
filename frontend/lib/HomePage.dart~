@@ -1,0 +1,649 @@
+import 'dart:typed_data';
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
+import 'dart:convert';
+import 'package:flutter/services.dart';
+import 'package:percent_indicator/percent_indicator.dart';
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> {
+  bool isLoading = false;
+  List<List<dynamic>> datasetPreview = [];
+  String bestModel = "";
+  double score = 0.0;
+  String problemType = "";
+  Map<String, dynamic> insights = {};
+  String errorMessage = "";
+
+  // Color scheme
+  final Color primaryColor = const Color(0xFF6A1B9A);
+  final Color secondaryColor = const Color(0xFFAB47BC);
+  final Color accentColor = const Color(0xFFE1BEE7);
+  final Color backgroundColor = const Color(0xFFF3E5F5);
+
+  Future<void> uploadFile() async {
+    FilePickerResult? result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['csv'],
+    );
+
+    if (result != null) {
+      Uint8List? fileBytes = result.files.single.bytes;
+      String fileName = result.files.single.name;
+
+      List<List<dynamic>> preview = _getDatasetPreview(fileBytes);
+      setState(() {
+        datasetPreview = preview;
+        isLoading = true;
+        errorMessage = "";
+      });
+
+      try {
+        var request = http.MultipartRequest(
+          'POST',
+          Uri.parse("http://127.0.0.1:5000/upload"),
+        );
+
+        request.files.add(http.MultipartFile.fromBytes(
+          'file',
+          fileBytes!,
+          filename: fileName,
+        ));
+
+        var response = await request.send();
+
+        if (response.statusCode == 200) {
+          var responseBody = await response.stream.bytesToString();
+          var jsonResponse = json.decode(responseBody);
+
+          setState(() {
+            insights = jsonResponse['insights'];
+            bestModel = jsonResponse['model_recommendation']['best_model'];
+            score = jsonResponse['model_recommendation']['score'];
+            problemType = jsonResponse['model_recommendation']['problem_type'];
+            isLoading = false;
+          });
+        } else {
+          setState(() {
+            errorMessage = "Error processing the file. Please try again.";
+            isLoading = false;
+          });
+        }
+      } catch (e) {
+        setState(() {
+          errorMessage = "An error occurred: ${e.toString()}";
+          isLoading = false;
+        });
+      }
+    }
+  }
+
+  List<List<dynamic>> _getDatasetPreview(Uint8List? fileBytes) {
+    if (fileBytes == null) return [];
+    String csvString = utf8.decode(fileBytes);
+    List<String> lines = csvString.split("\n");
+
+    List<List<dynamic>> preview = [];
+    for (int i = 0; i < (lines.length > 5 ? 5 : lines.length); i++) {
+      preview.add(lines[i].split(','));
+    }
+    return preview;
+  }
+
+  // Calculate percentage safely
+  double _calculatePercentage() {
+    // Ensure we have valid numerical values and prevent division by zero
+    if (insights.containsKey('numerical_features') &&
+        insights.containsKey('columns') &&
+        insights['columns'] != null &&
+        insights['columns'] is num &&
+        insights['columns'] > 0) {
+
+      var numericalFeatures = insights['numerical_features'];
+      var columns = insights['columns'];
+
+      if (numericalFeatures is num) {
+        return numericalFeatures / columns;
+      }
+    }
+    return 0.0; // Default value if calculation can't be performed
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: backgroundColor,
+      appBar: AppBar(
+        title: const Text(
+          "ML Algorithm Advisor",
+          style: TextStyle(fontWeight: FontWeight.bold),
+        ),
+        centerTitle: true,
+        backgroundColor: primaryColor,
+        elevation: 0,
+        systemOverlayStyle: SystemUiOverlayStyle.light,
+      ),
+      body: SingleChildScrollView(
+        child: Padding(
+          padding: const EdgeInsets.all(16.0),
+          child: Column(
+            children: [
+              // Upload Button with nicer design
+              Container(
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(15),
+                  boxShadow: [
+                    BoxShadow(
+                      color: primaryColor.withOpacity(0.2),
+                      blurRadius: 10,
+                      offset: const Offset(0, 4),
+                    ),
+                  ],
+                ),
+                padding: const EdgeInsets.all(20),
+                child: Column(
+                  children: [
+                    const Icon(
+                      Icons.cloud_upload_rounded,
+                      size: 60,
+                      color: Color(0xFF6A1B9A),
+                    ),
+                    const SizedBox(height: 16),
+                    const Text(
+                      "Upload your dataset to get model recommendations",
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 16,
+                        color: Colors.black87,
+                      ),
+                    ),
+                    const SizedBox(height: 20),
+                    ElevatedButton(
+                      onPressed: isLoading ? null : uploadFile,
+                      style: ElevatedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 32, vertical: 12),
+                        backgroundColor: primaryColor,
+                        foregroundColor: Colors.white,
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(30),
+                        ),
+                        elevation: 0,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.upload_file),
+                          const SizedBox(width: 8),
+                          Text(
+                            isLoading ? "Processing..." : "Select CSV File",
+                            style: const TextStyle(fontSize: 16),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 20),
+
+              // Loading Indicator with progress animation
+              if (isLoading)
+                Container(
+                  padding: const EdgeInsets.all(20),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(15),
+                  ),
+                  child: Column(
+                    children: [
+                      CircularProgressIndicator(
+                        valueColor: AlwaysStoppedAnimation<Color>(primaryColor),
+                      ),
+                      const SizedBox(height: 16),
+                      const Text(
+                        "Analyzing your dataset...",
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w500,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Error Message with card design
+              if (errorMessage.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 10),
+                  padding: const EdgeInsets.all(16),
+                  decoration: BoxDecoration(
+                    color: Colors.red.shade50,
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: Colors.red.shade300),
+                  ),
+                  child: Row(
+                    children: [
+                      const Icon(Icons.error_outline, color: Colors.red),
+                      const SizedBox(width: 10),
+                      Expanded(
+                        child: Text(
+                          errorMessage,
+                          style: const TextStyle(color: Colors.red, fontSize: 16),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Dataset Preview with improved table design
+              if (datasetPreview.isNotEmpty)
+                Container(
+                  margin: const EdgeInsets.symmetric(vertical: 15),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(15),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.grey.withOpacity(0.1),
+                        blurRadius: 10,
+                        offset: const Offset(0, 4),
+                      ),
+                    ],
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Padding(
+                        padding: const EdgeInsets.all(16),
+                        child: Row(
+                          children: [
+                            Icon(Icons.table_chart, color: primaryColor),
+                            const SizedBox(width: 8),
+                            const Text(
+                              "Dataset Preview",
+                              style: TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 18,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const Divider(height: 0),
+                      Padding(
+                        padding: const EdgeInsets.all(10),
+                        child: SingleChildScrollView(
+                          scrollDirection: Axis.horizontal,
+                          child: Theme(
+                            data: Theme.of(context).copyWith(
+                              dividerColor: accentColor,
+                              dataTableTheme: DataTableThemeData(
+                                headingTextStyle: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  color: primaryColor,
+                                ),
+                              ),
+                            ),
+                            child: DataTable(
+                              columnSpacing: 20,
+                              horizontalMargin: 12,
+                              headingRowColor: MaterialStateColor.resolveWith(
+                                      (states) => accentColor.withOpacity(0.2)),
+                              columns: datasetPreview.isNotEmpty && datasetPreview[0].isNotEmpty
+                                  ? datasetPreview[0]
+                                  .map((e) => DataColumn(label: Text(e.toString())))
+                                  .toList()
+                                  : [const DataColumn(label: Text("No Data"))],
+                              rows: datasetPreview.length > 1
+                                  ? datasetPreview
+                                  .sublist(1)
+                                  .map((row) => DataRow(
+                                cells: row
+                                    .map((cell) =>
+                                    DataCell(Text(cell.toString())))
+                                    .toList(),
+                              ))
+                                  .toList()
+                                  : [],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+
+              // Insights and Model Recommendation with improved visuals
+              if (!isLoading && insights.isNotEmpty)
+                Column(
+                  children: [
+                    // Data Insights Card with visualization elements
+                    Container(
+                      margin: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        boxShadow: [
+                          BoxShadow(
+                            color: Colors.grey.withOpacity(0.1),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              children: [
+                                Icon(Icons.insights, color: primaryColor),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  "Data Insights",
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Divider(height: 0),
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              children: [
+                                Row(
+                                  children: [
+                                    _buildInsightTile(
+                                      "Rows",
+                                      insights['rows']?.toString() ?? "0",
+                                      Icons.view_list,
+                                    ),
+                                    _buildInsightTile(
+                                      "Columns",
+                                      insights['columns']?.toString() ?? "0",
+                                      Icons.view_column,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                Row(
+                                  children: [
+                                    _buildInsightTile(
+                                      "Missing Values",
+                                      insights['missing_values']?.toString() ?? "0",
+                                      Icons.warning_amber,
+                                    ),
+                                    _buildInsightTile(
+                                      "Categorical Features",
+                                      insights['categorical_features']?.toString() ?? "0",
+                                      Icons.category,
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                LinearPercentIndicator(
+                                  animation: true,
+                                  lineHeight: 20.0,
+                                  animationDuration: 1000,
+                                  percent: _calculatePercentage().clamp(0.0, 1.0),
+                                  center: Text(
+                                    "${insights['numerical_features'] ?? 0} Numerical Features",
+                                    style: const TextStyle(
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 14,
+                                    ),
+                                  ),
+                                  barRadius: const Radius.circular(10),
+                                  progressColor: secondaryColor,
+                                  backgroundColor: accentColor.withOpacity(0.2),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+
+                    // Model Recommendation Card with improved visuals
+                    Container(
+                      margin: const EdgeInsets.symmetric(vertical: 10),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(15),
+                        gradient: LinearGradient(
+                          begin: Alignment.topLeft,
+                          end: Alignment.bottomRight,
+                          colors: [
+                            primaryColor.withOpacity(0.8),
+                            secondaryColor.withOpacity(0.9),
+                          ],
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: primaryColor.withOpacity(0.3),
+                            blurRadius: 10,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Row(
+                              children: [
+                                const Icon(Icons.recommend, color: Colors.white),
+                                const SizedBox(width: 8),
+                                const Text(
+                                  "Model Recommendation",
+                                  style: TextStyle(
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 18,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          const Divider(
+                            height: 0,
+                            color: Colors.white30,
+                          ),
+                          Padding(
+                            padding: const EdgeInsets.all(16),
+                            child: Column(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.15),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Row(
+                                    children: [
+                                      CircleAvatar(
+                                        backgroundColor: Colors.white,
+                                        child: Icon(
+                                          Icons.category,
+                                          color: primaryColor,
+                                        ),
+                                      ),
+                                      const SizedBox(width: 16),
+                                      Column(
+                                        crossAxisAlignment: CrossAxisAlignment.start,
+                                        children: [
+                                          const Text(
+                                            "Problem Type",
+                                            style: TextStyle(
+                                              fontSize: 14,
+                                              color: Colors.white70,
+                                            ),
+                                          ),
+                                          Text(
+                                            problemType.toUpperCase(),
+                                            style: const TextStyle(
+                                              fontSize: 20,
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.white,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const SizedBox(height: 16),
+                                Container(
+                                  padding: const EdgeInsets.all(16),
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Column(
+                                    children: [
+                                      Row(
+                                        children: [
+                                          Icon(
+                                            Icons.auto_awesome,
+                                            color: primaryColor,
+                                            size: 32,
+                                          ),
+                                          const SizedBox(width: 12),
+                                          Column(
+                                            crossAxisAlignment: CrossAxisAlignment.start,
+                                            children: [
+                                              Text(
+                                                "Best Model",
+                                                style: TextStyle(
+                                                  fontSize: 14,
+                                                  color: Colors.grey.shade600,
+                                                ),
+                                              ),
+                                              Text(
+                                                bestModel,
+                                                style: TextStyle(
+                                                  fontSize: 22,
+                                                  fontWeight: FontWeight.bold,
+                                                  color: primaryColor,
+                                                ),
+                                              ),
+                                            ],
+                                          ),
+                                        ],
+                                      ),
+                                      const SizedBox(height: 20),
+                                      Row(
+                                        mainAxisAlignment: MainAxisAlignment.center,
+                                        children: [
+                                          CircularPercentIndicator(
+                                            radius: 60.0,
+                                            lineWidth: 10.0,
+                                            percent: (problemType.toLowerCase() == "regression" ?
+                                            (1.0 - (score / 100).clamp(0.0, 1.0)) :
+                                            (score / 100).clamp(0.0, 1.0)),
+                                            center: Text(
+                                              "${score.toStringAsFixed(2)}",
+                                              style: const TextStyle(
+                                                fontWeight: FontWeight.bold,
+                                                fontSize: 20.0,
+                                              ),
+                                            ),
+                                            progressColor: primaryColor,
+                                            backgroundColor: accentColor.withOpacity(0.2),
+                                            circularStrokeCap: CircularStrokeCap.round,
+                                            animation: true,
+                                            animationDuration: 1200,
+                                          ),
+                                          const SizedBox(width: 20),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment: CrossAxisAlignment.start,
+                                              children: [
+                                                Text(
+                                                  problemType.toLowerCase() == "regression" ? "RMSE" : "Accuracy",
+                                                  style: const TextStyle(
+                                                    fontSize: 16,
+                                                    fontWeight: FontWeight.bold,
+                                                  ),
+                                                ),
+                                                const SizedBox(height: 8),
+                                                Text(
+                                                  problemType.toLowerCase() == "regression"
+                                                      ? "Lower is better"
+                                                      : "Higher is better",
+                                                  style: TextStyle(
+                                                    fontSize: 14,
+                                                    color: Colors.grey.shade600,
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInsightTile(String title, String value, IconData icon) {
+    return Expanded(
+      child: Container(
+        margin: const EdgeInsets.symmetric(horizontal: 4),
+        padding: const EdgeInsets.all(12),
+        decoration: BoxDecoration(
+          color: accentColor.withOpacity(0.1),
+          borderRadius: BorderRadius.circular(10),
+        ),
+        child: Column(
+          children: [
+            Icon(icon, color: primaryColor),
+            const SizedBox(height: 8),
+            Text(
+              title,
+              style: TextStyle(
+                color: Colors.grey.shade700,
+                fontSize: 14,
+              ),
+            ),
+            const SizedBox(height: 4),
+            Text(
+              value,
+              style: const TextStyle(
+                fontWeight: FontWeight.bold,
+                fontSize: 18,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

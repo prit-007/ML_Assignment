@@ -1,0 +1,78 @@
+// services/api_service.dart
+import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
+
+import 'package:http/http.dart' as http;
+
+import '../models/analysis_result.dart';
+
+class ApiService {
+  final String baseUrl = 'http://127.0.0.1/:5000';
+
+  Future<AnalysisResult> uploadFile(File file) async {
+    try {
+      final url = Uri.parse('$baseUrl/upload');
+
+      var request = http.MultipartRequest('POST', url);
+      request.files.add(
+        await http.MultipartFile.fromPath('file', file.path),
+      );
+
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        Map<String, dynamic> jsonResponse = json.decode(response.body);
+        return AnalysisResult.fromJson(jsonResponse);
+      } else {
+        Map<String, dynamic> errorJson = json.decode(response.body);
+        String errorMessage = errorJson['error'] ?? 'Unknown error occurred';
+        String suggestion = errorJson['suggestion'] ?? '';
+        throw '$errorMessage ${suggestion.isNotEmpty ? '\n$suggestion' : ''}';
+      }
+    } catch (e) {
+      throw 'Failed to upload file: ${e.toString()}';
+    }
+  }
+
+  Future<AnalysisResult> uploadFileBytes(
+      Uint8List bytes, String fileName) async {
+    try {
+      final url = Uri.parse('$baseUrl/upload');
+
+      var request = http.MultipartRequest('POST', url);
+      request.files.add(
+        http.MultipartFile.fromBytes(
+          'file',
+          bytes,
+          filename: fileName,
+        ),
+      );
+
+      var streamedResponse = await request.send();
+      var response = await http.Response.fromStream(streamedResponse);
+
+      if (response.statusCode == 200) {
+        Map<String, dynamic> jsonResponse = json.decode(response.body);
+        return AnalysisResult.fromJson(jsonResponse);
+      } else {
+        Map<String, dynamic> errorJson = json.decode(response.body);
+        String errorMessage = errorJson['error'] ?? 'Unknown error occurred';
+        String suggestion = errorJson['suggestion'] ?? '';
+        throw '$errorMessage ${suggestion.isNotEmpty ? '\n$suggestion' : ''}';
+      }
+    } catch (e) {
+      throw 'Failed to upload file: ${e.toString()}';
+    }
+  }
+
+  Future<bool> checkHealth() async {
+    try {
+      final response = await http.get(Uri.parse('$baseUrl/health'));
+      return response.statusCode == 200;
+    } catch (e) {
+      return false;
+    }
+  }
+}
